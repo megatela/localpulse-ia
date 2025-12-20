@@ -1,0 +1,108 @@
+import { GoogleGenAI, Type } from "@google/genai";
+
+export default async (req: Request) => {
+  if (req.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  try {
+    const { data, coords } = await req.json();
+
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY!
+    });
+
+    const prompt = `
+Realiza una auditoría técnica y estratégica de SEO local para un Perfil de Empresa en Google (GBP).
+
+INFORMACIÓN DEL NEGOCIO:
+- Nombre: ${data.businessName}
+- Ciudad: ${data.city}
+- Coordenadas aproximadas: ${coords ? `${coords.lat}, ${coords.lng}` : 'No proporcionadas'}
+- Categoría: ${data.category}
+- Descripción Actual: ${data.description}
+- Sitio Web: ${data.website || 'No proporcionado'}
+- Fotos: ${data.hasPhotos ? 'Sí' : 'No'}
+- Reseñas: ${data.hasReviews ? 'Sí' : 'No'}
+
+REGLAS:
+1. Idioma: ESPAÑOL
+2. Análisis local real basado en ${data.city}
+3. Respuesta estructurada y accionable
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            score: { type: Type.INTEGER },
+            businessName: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            categories: {
+              type: Type.OBJECT,
+              properties: {
+                primary: { type: Type.STRING },
+                suggested: { type: Type.ARRAY, items: { type: Type.STRING } }
+              }
+            },
+            keywords: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  term: { type: Type.STRING },
+                  placement: { type: Type.STRING }
+                }
+              }
+            },
+            descriptionOptimization: { type: Type.STRING },
+            actionPlan: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  impact: { type: Type.STRING },
+                  description: { type: Type.STRING }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+
+    const groundingChunks =
+      response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+
+    const sources = groundingChunks
+      .filter((chunk: any) => chunk.web)
+      .map((chunk: any) => ({
+        title: chunk.web.title || "Fuente",
+        uri: chunk.web.uri
+      }));
+
+    return new Response(
+      JSON.stringify({
+        ...parsed,
+        sources
+      }),
+      {
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  } catch (error: any) {
+    console.error(error);
+    return new Response(
+      JSON.stringify({ error: "Error procesando la auditoría IA" }),
+      { status: 500 }
+    );
+  }
+};
