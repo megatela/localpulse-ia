@@ -8,13 +8,15 @@ export default async (req: Request) => {
   try {
     const { data, coords } = await req.json();
 
-    const genAI = new GoogleGenerativeAI(
-      process.env.GEMINI_API_KEY as string
-    );
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY no está configurada en Netlify");
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
     const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash-latest"
-});
+      model: "gemini-1.5-flash-latest"
+    });
 
     const prompt = `
 Eres un experto en SEO local y Google Business Profile.
@@ -53,19 +55,37 @@ INFORMACIÓN DEL NEGOCIO:
 REGLAS:
 - Idioma: ESPAÑOL
 - Respuesta accionable
-- No texto fuera del JSON
+- NO texto fuera del JSON
 `;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const rawText = result.response.text();
 
-    return new Response(text, {
-      headers: { "Content-Type": "application/json" },
+    // 🔒 Limpieza defensiva ante markdown / texto extra
+    const cleaned = rawText
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (err) {
+      console.error("❌ Gemini devolvió texto no válido:", cleaned);
+      throw new Error("Gemini no devolvió un JSON válido");
+    }
+
+    return new Response(JSON.stringify(parsed), {
+      headers: { "Content-Type": "application/json" }
     });
+
   } catch (error: any) {
-    console.error(error);
+    console.error("🔥 Error en función Gemini:", error);
+
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({
+        error: "Error procesando la auditoría con IA"
+      }),
       { status: 500 }
     );
   }
