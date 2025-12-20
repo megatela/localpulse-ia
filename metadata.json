@@ -1,0 +1,7 @@
+{
+  "name": "LocalPulse IA - Auditor de Perfiles de Negocio",
+  "description": "Herramienta SaaS profesional para auditar y optimizar Perfiles de Empresa en Google utilizando IA para mejorar el posicionamiento local.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
