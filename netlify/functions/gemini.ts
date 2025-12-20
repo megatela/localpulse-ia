@@ -22,8 +22,9 @@ export default async (req: Request) => {
 
     // ✅ MODELO ESTABLE Y SOPORTADO EN NETLIFY
     const model = genAI.getGenerativeModel({
-      model: "models/gemini-1.5-flash",
+    model: "models/gemini-1.0-pro",
     });
+
 
     const prompt = `
 Eres un experto en SEO local y Google Business Profile.
