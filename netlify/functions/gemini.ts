@@ -9,18 +9,17 @@ export default async (req: Request) => {
     const { data, coords } = await req.json();
 
     if (!process.env.GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY no configurada");
+      throw new Error("GEMINI_API_KEY no definida");
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-    // ✅ MODELO CORRECTO Y SOPORTADO
     const model = genAI.getGenerativeModel({
-      model: "gemini-pro"
+      model: "models/gemini-pro"
     });
 
     const prompt = `
-Devuelve EXCLUSIVAMENTE un JSON válido.
+Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
 
 {
   "score": number,
@@ -41,31 +40,30 @@ Devuelve EXCLUSIVAMENTE un JSON válido.
   }[]
 }
 
-NEGOCIO:
+INFORMACIÓN DEL NEGOCIO:
 - Nombre: ${data.businessName}
 - Ciudad: ${data.city}
-- Coordenadas: ${coords ? `${coords.lat}, ${coords.lng}` : "No"}
+- Coordenadas: ${coords ? `${coords.lat}, ${coords.lng}` : "No proporcionadas"}
 - Categoría: ${data.category}
-- Descripción: ${data.description}
+- Descripción actual: ${data.description}
 - Web: ${data.website || "No"}
 - Fotos: ${data.hasPhotos ? "Sí" : "No"}
 - Reseñas: ${data.hasReviews ? "Sí" : "No"}
 
 REGLAS:
-- Idioma ESPAÑOL
-- No texto fuera del JSON
-- SEO local real
+- Idioma: ESPAÑOL
+- Respuesta accionable
+- NO texto fuera del JSON
 `;
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
 
-    // ✅ Validación robusta
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error("Gemini devolvió JSON inválido");
+      throw new Error("Respuesta no es JSON válido");
     }
 
     return new Response(JSON.stringify(parsed), {
