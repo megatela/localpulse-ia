@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
 export default async (req: Request) => {
   if (req.method !== "POST") {
@@ -12,13 +12,13 @@ export default async (req: Request) => {
       throw new Error("GEMINI_API_KEY no definida");
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-    const model = genAI.getGenerativeModel({
-      model: "models/gemini-pro"
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY
     });
 
     const prompt = `
+Eres un experto en SEO local y Google Business Profile.
+
 Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
 
 {
@@ -52,28 +52,33 @@ INFORMACIÓN DEL NEGOCIO:
 
 REGLAS:
 - Idioma: ESPAÑOL
-- Respuesta accionable
-- NO texto fuera del JSON
+- Solo JSON válido
+- Sin texto extra
 `;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }]
+    });
 
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error("Respuesta no es JSON válido");
+    const text = response.text;
+
+    // 🔐 Validación robusta
+    const jsonStart = text.indexOf("{");
+    const jsonEnd = text.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) {
+      throw new Error("Respuesta no contiene JSON válido");
     }
+
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
 
     return new Response(JSON.stringify(parsed), {
       headers: { "Content-Type": "application/json" }
     });
-
-  } catch (error: any) {
-    console.error("❌ Gemini Function Error:", error);
+  } catch (err: any) {
+    console.error("❌ Gemini Function Error:", err);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: err.message }),
       { status: 500 }
     );
   }
