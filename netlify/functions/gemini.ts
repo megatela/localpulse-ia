@@ -1,5 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
-
 export default async (req: Request) => {
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
@@ -8,13 +6,10 @@ export default async (req: Request) => {
   try {
     const { data, coords } = await req.json();
 
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY no definida");
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENROUTER_API_KEY no definida");
     }
-
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY
-    });
 
     const prompt = `
 Eres un experto en SEO local y Google Business Profile.
@@ -52,33 +47,55 @@ INFORMACIÓN DEL NEGOCIO:
 
 REGLAS:
 - Idioma: ESPAÑOL
-- Solo JSON válido
-- Sin texto extra
+- Respuesta accionable
+- NO incluyas texto fuera del JSON
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: [{ role: "user", parts: [{ text: prompt }] }]
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o-mini",
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.4
+      })
     });
 
-    const text = response.text;
-
-    // 🔐 Validación robusta
-    const jsonStart = text.indexOf("{");
-    const jsonEnd = text.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) {
-      throw new Error("Respuesta no contiene JSON válido");
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("OpenRouter error:", errorText);
+      throw new Error("Error en OpenRouter");
     }
 
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    const result = await response.json();
+    const text = result.choices?.[0]?.message?.content;
+
+    if (!text) {
+      throw new Error("Respuesta vacía del modelo");
+    }
+
+    // Parseo robusto
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      console.error("Respuesta no JSON:", text);
+      throw new Error("La IA no devolvió JSON válido");
+    }
 
     return new Response(JSON.stringify(parsed), {
       headers: { "Content-Type": "application/json" }
     });
-  } catch (err: any) {
-    console.error("❌ Gemini Function Error:", err);
+
+  } catch (error: any) {
+    console.error("❌ Gemini Function Error:", error);
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: error.message }),
       { status: 500 }
     );
   }
