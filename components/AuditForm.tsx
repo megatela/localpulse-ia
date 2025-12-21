@@ -8,7 +8,9 @@ import {
   Globe,
   Camera,
   MessageSquare,
-  Loader2
+  Loader2,
+  Navigation,
+  AlertTriangle
 } from 'lucide-react';
 
 interface AuditFormProps {
@@ -27,46 +29,44 @@ const AuditForm: React.FC<AuditFormProps> = ({ onAudit, loading }) => {
     description: '',
     website: '',
     hasPhotos: false,
-    hasReviews: false
+    hasReviews: false,
   });
 
-  /**
-   * Solicita la ubicación SOLO cuando el usuario envía el formulario
-   * (esto es obligatorio para que el navegador muestre el popup)
-   */
-  const requestLocation = (): Promise<{ lat: number; lng: number } | undefined> => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        resolve(undefined);
-        return;
-      }
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationDenied, setLocationDenied] = useState(false);
+  const [requestingLocation, setRequestingLocation] = useState(false);
 
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        () => {
-          // Usuario denegó permisos o error
-          resolve(undefined);
-        },
-        {
-          enableHighAccuracy: false,
-          timeout: 5000
-        }
-      );
-    });
+  const requestLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationDenied(true);
+      return;
+    }
+
+    setRequestingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        setLocationDenied(false);
+        setRequestingLocation(false);
+      },
+      () => {
+        setLocationDenied(true);
+        setRequestingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+      }
+    );
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    // 🔥 AQUÍ se dispara el popup del navegador
-    const coords = await requestLocation();
-
-    onAudit(formData, coords);
+    onAudit(formData, coords ?? undefined);
   };
 
   return (
@@ -75,153 +75,127 @@ const AuditForm: React.FC<AuditFormProps> = ({ onAudit, loading }) => {
       className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-gray-100"
     >
       <div className="space-y-6">
-        {/* Nombre del negocio */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Nombre del Negocio
-          </label>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              required
-              type="text"
-              placeholder="ej. Panadería Artesanal de Juan"
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={formData.businessName}
-              onChange={(e) =>
-                setFormData({ ...formData, businessName: e.target.value })
-              }
-            />
-          </div>
-        </div>
 
-        {/* Ciudad + Categoría */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Ciudad / Localidad
-            </label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-              <input
-                required
-                type="text"
-                placeholder="ej. Madrid"
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none"
-                value={formData.city}
-                onChange={(e) =>
-                  setFormData({ ...formData, city: e.target.value })
-                }
-              />
+        {/* BLOQUE GEOLOCALIZACIÓN */}
+        <div
+          className={`rounded-xl p-4 border ${
+            coords
+              ? 'bg-green-50 border-green-200'
+              : locationDenied
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-blue-50 border-blue-200'
+          }`}
+        >
+          <div className="flex items-start space-x-3">
+            {coords ? (
+              <MapPin className="w-5 h-5 text-green-600 mt-0.5" />
+            ) : locationDenied ? (
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+            ) : (
+              <Navigation className="w-5 h-5 text-blue-600 mt-0.5" />
+            )}
+
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-gray-900">
+                Auditoría SEO Local basada en proximidad
+              </p>
+
+              {!coords && !locationDenied && (
+                <p className="text-xs text-gray-700 mt-1">
+                  Para una auditoría precisa, necesitamos tu ubicación
+                  geográfica (latitud y longitud).
+                </p>
+              )}
+
+              {coords && (
+                <p className="text-xs text-green-700 mt-1 font-semibold">
+                  ✔ Ubicación detectada correctamente. Auditoría completa activada.
+                </p>
+              )}
+
+              {locationDenied && (
+                <p className="text-xs text-amber-700 mt-1 font-semibold">
+                  ⚠ No se concedió acceso a la ubicación. La auditoría continuará
+                  en modo limitado, sin análisis de proximidad ni competencia local.
+                </p>
+              )}
+
+              {!coords && (
+                <button
+                  type="button"
+                  onClick={requestLocation}
+                  disabled={requestingLocation}
+                  className="mt-3 inline-flex items-center text-sm font-bold text-blue-600 hover:underline"
+                >
+                  {requestingLocation ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Obteniendo ubicación…
+                    </>
+                  ) : (
+                    <>
+                      <MapPin className="w-4 h-4 mr-2" />
+                      Usar mi ubicación
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Categoría Principal Actual
-            </label>
-            <div className="relative">
-              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-              <input
-                required
-                type="text"
-                placeholder="ej. Panadería"
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none"
-                value={formData.category}
-                onChange={(e) =>
-                  setFormData({ ...formData, category: e.target.value })
-                }
-              />
-            </div>
-          </div>
         </div>
 
-        {/* Descripción */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Descripción Actual del Negocio
-          </label>
-          <div className="relative">
-            <FileText className="absolute left-3 top-4 text-gray-400 w-5 h-5" />
-            <textarea
-              required
-              rows={4}
-              placeholder="Pega aquí la descripción actual de tu perfil de Google..."
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              value={formData.description}
-              onChange={(e) =>
-                setFormData({ ...formData, description: e.target.value })
-              }
-            />
-          </div>
-        </div>
+        {/* FORMULARIO */}
+        <input
+          required
+          placeholder="Nombre del negocio"
+          className="w-full px-4 py-3 rounded-xl border border-gray-200"
+          value={formData.businessName}
+          onChange={(e) =>
+            setFormData({ ...formData, businessName: e.target.value })
+          }
+        />
 
-        {/* Web */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Sitio Web (Opcional)
-          </label>
-          <div className="relative">
-            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="url"
-              placeholder="https://..."
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={formData.website}
-              onChange={(e) =>
-                setFormData({ ...formData, website: e.target.value })
-              }
-            />
-          </div>
-        </div>
+        <input
+          required
+          placeholder="Ciudad"
+          className="w-full px-4 py-3 rounded-xl border border-gray-200"
+          value={formData.city}
+          onChange={(e) =>
+            setFormData({ ...formData, city: e.target.value })
+          }
+        />
 
-        {/* Toggles */}
-        <div className="flex flex-wrap gap-6 pt-2">
-          <label className="flex items-center space-x-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.hasPhotos}
-              onChange={(e) =>
-                setFormData({ ...formData, hasPhotos: e.target.checked })
-              }
-            />
-            <span className="flex items-center text-sm">
-              <Camera className="w-4 h-4 mr-2" /> Tiene Fotos
-            </span>
-          </label>
+        <input
+          required
+          placeholder="Categoría"
+          className="w-full px-4 py-3 rounded-xl border border-gray-200"
+          value={formData.category}
+          onChange={(e) =>
+            setFormData({ ...formData, category: e.target.value })
+          }
+        />
 
-          <label className="flex items-center space-x-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.hasReviews}
-              onChange={(e) =>
-                setFormData({ ...formData, hasReviews: e.target.checked })
-              }
-            />
-            <span className="flex items-center text-sm">
-              <MessageSquare className="w-4 h-4 mr-2" /> Tiene Reseñas
-            </span>
-          </label>
-        </div>
+        <textarea
+          required
+          rows={4}
+          placeholder="Descripción actual del negocio"
+          className="w-full px-4 py-3 rounded-xl border border-gray-200"
+          value={formData.description}
+          onChange={(e) =>
+            setFormData({ ...formData, description: e.target.value })
+          }
+        />
 
-        {/* Botón */}
         <button
           disabled={loading}
           type="submit"
-          className={`w-full py-4 rounded-xl font-bold text-white transition-all ${
+          className={`w-full py-4 rounded-xl font-bold text-white transition ${
             loading
               ? 'bg-blue-400 cursor-not-allowed'
-              : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'
+              : 'bg-gradient-to-r from-blue-600 to-indigo-600'
           }`}
         >
-          {loading ? (
-            <span className="flex items-center justify-center">
-              <Loader2 className="animate-spin mr-2 h-5 w-5" />
-              Ejecutando Auditoría...
-            </span>
-          ) : (
-            'Realizar Auditoría con IA'
-          )}
+          {loading ? 'Ejecutando Auditoría…' : 'Realizar Auditoría con IA'}
         </button>
       </div>
     </form>
