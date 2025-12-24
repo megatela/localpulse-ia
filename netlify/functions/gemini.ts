@@ -1,38 +1,80 @@
 import type { Handler } from "@netlify/functions";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "anthropic/claude-3.5-sonnet";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-/**
- * SYSTEM / DEVELOPER PROMPT
- * Define el comportamiento global de la IA (NO depende del usuario)
- */
-const SYSTEM_PROMPT = `
-Eres un motor de auditoría REAL de SEO Local especializado en Google Business Profile (GBP).
+export const handler: Handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      body: "Method Not Allowed"
+    };
+  }
 
-⚠️ NO es una simulación.
-⚠️ NO es un ejemplo académico.
-⚠️ NO inventes datos.
-⚠️ NO suavices conclusiones.
+  if (!OPENROUTER_API_KEY) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "OPENROUTER_API_KEY no configurada" })
+    };
+  }
 
-Tu tarea es:
-- Analizar negocios locales como lo haría un consultor SEO senior
-- Pensar en términos de ranking local, proximidad, relevancia y prominencia
-- Emitir recomendaciones ACCIONABLES y priorizadas
+  try {
+    const { data, coords, mode } = JSON.parse(event.body || "{}");
 
-REGLAS ABSOLUTAS:
-1. Idioma: ESPAÑOL
-2. Devuelve EXCLUSIVAMENTE JSON válido (sin texto adicional)
-3. Sé crítico: si algo está mal, dilo
-4. Usa el contexto geográfico (lat/lng) como factor clave
-5. No repitas explicaciones obvias
-6. Optimiza para resultados reales en Google Maps
+    /* =========================================================
+       SYSTEM / DEVELOPER PROMPT (ANTI-ALUCINACIÓN – DEFINITIVO)
+       ========================================================= */
+    const systemPrompt = `
+Eres un auditor profesional de SEO local especializado en Google Business Profile (GBP).
 
-ESTRUCTURA DE SALIDA OBLIGATORIA:
+REGLAS ABSOLUTAS (NO VIOLABLES):
+1. NO inventes datos.
+2. NO simules acceso a Google Business Profile.
+3. NO afirmes que un atributo, post, insight o métrica existe si no es información pública verificable.
+4. Si una información requiere acceso interno al GBP, debes indicarlo explícitamente.
+5. Usa únicamente:
+   - Información proporcionada por el usuario
+   - Datos públicos típicos visibles en Google (SERP)
+6. Nunca “asumas” resultados.
+7. Nunca uses lenguaje ambiguo.
+8. Declara limitaciones cuando existan.
+
+IMPORTANTE:
+Esta es una auditoría REAL basada en SEO local público, NO una simulación.
+
+Si algo requiere gestión profesional del perfil, debes marcarlo como:
+"Requiere acceso directo al perfil de Google Business".
+
+MODO DE FUNCIONAMIENTO:
+- DEMO: análisis limitado, advertir restricciones
+- FULL: análisis completo público + checklist accionable
+
+IDIOMA: Español
+FORMATO: Devuelve exclusivamente JSON válido
+    `.trim();
+
+    /* =========================
+       USER PROMPT (DATOS REALES)
+       ========================= */
+    const userPrompt = `
+NEGOCIO:
+- Nombre: ${data.businessName}
+- Ciudad: ${data.city}
+- Categoría declarada: ${data.category}
+- Descripción actual: ${data.description}
+- Web: ${data.website || "No proporcionada"}
+- Tiene fotos: ${data.hasPhotos ? "Sí" : "No"}
+- Tiene reseñas: ${data.hasReviews ? "Sí" : "No"}
+- Coordenadas: ${coords ? `${coords.lat}, ${coords.lng}` : "No proporcionadas"}
+
+MODO: ${mode || "DEMO"}
+
+OBJETIVO:
+Realizar una auditoría SEO local REAL del perfil de Google Business enfocada en visibilidad, relevancia y proximidad.
+
+DEVUELVE ESTE JSON EXACTO:
 
 {
-  "score": number (0-100),
-  "businessName": string,
+  "score": number,
   "summary": string,
   "categories": {
     "primary": string,
@@ -47,90 +89,51 @@ ESTRUCTURA DE SALIDA OBLIGATORIA:
   "actionPlan": {
     "title": string,
     "impact": "High" | "Medium" | "Low",
-    "description": string
+    "description": string,
+    "requiresProfessionalAccess": boolean
   }[],
-  "competitors": {
-    "name": string,
-    "strengths": string[],
-    "weaknesses": string[]
+  "limitations": string[],
+  "sources": {
+    "title": string,
+    "uri": string
   }[]
 }
-`;
+    `.trim();
 
-/**
- * Netlify Function
- */
-export const handler: Handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: "Method Not Allowed",
-    };
-  }
-
-  try {
-    const { data, coords, mode } = JSON.parse(event.body || "{}");
-
-    if (!data || !coords) {
-      throw new Error("Datos insuficientes para auditoría real");
-    }
-
-    /**
-     * USER PROMPT (dinámico)
-     * Contiene SOLO datos del negocio
-     */
-    const USER_PROMPT = `
-MODO DE USO: ${mode === "FULL" ? "FULL (usuario de pago)" : "DEMO (limitado)"}
-
-INFORMACIÓN DEL NEGOCIO:
-- Nombre: ${data.businessName}
-- Ciudad: ${data.city}
-- Coordenadas exactas: ${coords.lat}, ${coords.lng}
-- Categoría actual: ${data.category}
-- Descripción actual: ${data.description}
-- Sitio web: ${data.website || "No disponible"}
-- Tiene fotos: ${data.hasPhotos ? "Sí" : "No"}
-- Tiene reseñas: ${data.hasReviews ? "Sí" : "No"}
-
-INSTRUCCIONES ESPECÍFICAS:
-- Analiza el posicionamiento local REAL basado en proximidad
-- Detecta debilidades frente a competidores cercanos
-- Sugiere keywords GEOLOCALIZADAS
-- Indica EXACTAMENTE dónde implementar cada keyword
-- Si el modo es DEMO:
-  - Reduce profundidad
-  - Oculta parte del análisis competitivo
-  - No entregues la optimización completa de la descripción
-`;
-
-    const response = await fetch(OPENROUTER_URL, {
+    /* ======================
+       OPENROUTER REQUEST
+       ====================== */
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://legendary-crostata-cc8b9b.netlify.app",
-        "X-Title": "LocalPulse IA",
+        "X-Title": "LocalPulse IA"
       },
       body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.3,
+        model: "openai/gpt-4o-mini",
+        temperature: 0.2,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: USER_PROMPT },
-        ],
-      }),
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+      })
     });
 
     const json = await response.json();
 
     if (!json.choices?.[0]?.message?.content) {
-      throw new Error("Respuesta inválida del modelo IA");
+      throw new Error("Respuesta inválida del modelo");
     }
+
+    // Parseo estricto del JSON devuelto por la IA
+    const parsed = JSON.parse(json.choices[0].message.content);
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: json.choices[0].message.content,
+      body: JSON.stringify(parsed)
     };
 
   } catch (error: any) {
@@ -139,9 +142,9 @@ INSTRUCCIONES ESPECÍFICAS:
     return {
       statusCode: 500,
       body: JSON.stringify({
-        error: "Fallo en el servidor. Auditoría no generada.",
-        detail: error.message,
-      }),
+        error: "No se pudo generar la auditoría con IA",
+        details: error.message
+      })
     };
   }
 };
