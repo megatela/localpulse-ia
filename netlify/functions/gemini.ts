@@ -1,150 +1,165 @@
 import type { Handler } from "@netlify/functions";
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY!;
+const OPENROUTER_MODEL = "google/gemini-pro";
 
 export const handler: Handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: "Method Not Allowed"
-    };
-  }
-
-  if (!OPENROUTER_API_KEY) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "OPENROUTER_API_KEY no configurada" })
-    };
-  }
-
   try {
-    const { data, coords, mode } = JSON.parse(event.body || "{}");
+    if (event.httpMethod !== "POST") {
+      return {
+        statusCode: 405,
+        body: "Method Not Allowed",
+      };
+    }
 
-    /* =========================================================
-       SYSTEM / DEVELOPER PROMPT (ANTI-ALUCINACIÓN – DEFINITIVO)
-       ========================================================= */
-    const systemPrompt = `
-Eres un auditor profesional de SEO local especializado en Google Business Profile (GBP).
-
-REGLAS ABSOLUTAS (NO VIOLABLES):
-1. NO inventes datos.
-2. NO simules acceso a Google Business Profile.
-3. NO afirmes que un atributo, post, insight o métrica existe si no es información pública verificable.
-4. Si una información requiere acceso interno al GBP, debes indicarlo explícitamente.
-5. Usa únicamente:
-   - Información proporcionada por el usuario
-   - Datos públicos típicos visibles en Google (SERP)
-6. Nunca “asumas” resultados.
-7. Nunca uses lenguaje ambiguo.
-8. Declara limitaciones cuando existan.
-
-IMPORTANTE:
-Esta es una auditoría REAL basada en SEO local público, NO una simulación.
-
-Si algo requiere gestión profesional del perfil, debes marcarlo como:
-"Requiere acceso directo al perfil de Google Business".
-
-MODO DE FUNCIONAMIENTO:
-- DEMO: análisis limitado, advertir restricciones
-- FULL: análisis completo público + checklist accionable
-
-IDIOMA: Español
-FORMATO: Devuelve exclusivamente JSON válido
-    `.trim();
+    const body = JSON.parse(event.body || "{}");
+    const {
+      businessName,
+      city,
+      category,
+      description,
+      website,
+      hasPhotos,
+      hasReviews,
+      coords, // { lat, lng } | undefined
+      mode = "DEMO", // DEMO | FULL
+    } = body;
 
     /* =========================
-       USER PROMPT (DATOS REALES)
+       SYSTEM / DEVELOPER PROMPT
        ========================= */
-    const userPrompt = `
-NEGOCIO:
-- Nombre: ${data.businessName}
-- Ciudad: ${data.city}
-- Categoría declarada: ${data.category}
-- Descripción actual: ${data.description}
-- Web: ${data.website || "No proporcionada"}
-- Tiene fotos: ${data.hasPhotos ? "Sí" : "No"}
-- Tiene reseñas: ${data.hasReviews ? "Sí" : "No"}
-- Coordenadas: ${coords ? `${coords.lat}, ${coords.lng}` : "No proporcionadas"}
+    const systemPrompt = `
+Eres un auditor profesional de SEO Local especializado en Google Business Profile (GBP).
 
-MODO: ${mode || "DEMO"}
+REGLAS ABSOLUTAS (OBLIGATORIAS):
+1. Responde EXCLUSIVAMENTE con JSON válido.
+2. NO incluyas texto fuera del JSON.
+3. NO agregues comentarios ni explicaciones.
+4. NO simules accesos internos a Google Business Profile.
+5. NO inventes métricas, datos internos ni insights privados.
+6. Si no tienes datos suficientes, indícalo explícitamente dentro del JSON.
+7. Nunca devuelvas errores por falta de datos.
+
+UBICACIÓN GEOGRÁFICA:
+- Si las coordenadas NO están disponibles:
+  - La auditoría DEBE continuar.
+  - Marca el análisis como "limited".
+  - Reduce el score si corresponde.
+  - Incluye un mensaje UX claro indicando modo limitado.
+  - NO falles.
+  - NO muestres advertencias fuera del JSON.
+
+ACCESOS PROFESIONALES:
+- Todo lo que requiera acceso real al perfil GBP debe marcarse como:
+  "requiresProfessionalAccess": true
+
+IDIOMA: Español
+FORMATO: JSON ESTRICTO
+`.trim();
+
+    /* =================
+       USER PROMPT
+       ================= */
+    const userPrompt = `
+DATOS DEL NEGOCIO:
+- Nombre: ${businessName}
+- Ciudad: ${city}
+- Categoría: ${category}
+- Descripción actual: ${description}
+- Sitio web: ${website || "No disponible"}
+- Tiene fotos: ${hasPhotos ? "Sí" : "No"}
+- Tiene reseñas: ${hasReviews ? "Sí" : "No"}
+- Coordenadas: ${
+      coords ? `${coords.lat}, ${coords.lng}` : "NO_DISPONIBLES"
+    }
+- Modo de la aplicación: ${mode}
 
 OBJETIVO:
-Realizar una auditoría SEO local REAL del perfil de Google Business enfocada en visibilidad, relevancia y proximidad.
+Realizar una auditoría SEO Local REALISTA del perfil Google Business Profile
+basada únicamente en información pública, contexto local y mejores prácticas SEO.
 
-DEVUELVE ESTE JSON EXACTO:
+ENTREGABLE:
+Devuelve un JSON con la siguiente estructura EXACTA:
 
 {
+  "mode": "DEMO | FULL",
+  "analysisLevel": "full | limited",
+  "uxMessage": "string",
   "score": number,
-  "summary": string,
-  "categories": {
-    "primary": string,
-    "suggested": string[]
-  },
-  "keywords": {
-    "term": string,
-    "placement": string
-  }[],
-  "attributes": string[],
-  "descriptionOptimization": string,
-  "actionPlan": {
-    "title": string,
-    "impact": "High" | "Medium" | "Low",
-    "description": string,
-    "requiresProfessionalAccess": boolean
-  }[],
   "limitations": string[],
-  "sources": {
-    "title": string,
-    "uri": string
-  }[]
+  "keywords": string[],
+  "categorySuggestions": string[],
+  "attributeSuggestions": string[],
+  "reviewsAnalysis": {
+    "status": "good | average | poor",
+    "recommendation": string
+  },
+  "competitors": [
+    {
+      "name": string,
+      "category": string,
+      "strength": string
+    }
+  ],
+  "requiresProfessionalAccess": boolean,
+  "professionalServicesAvailable": string[]
 }
-    `.trim();
 
-    /* ======================
-       OPENROUTER REQUEST
-       ====================== */
+REGLAS:
+- Si Coordenadas = NO_DISPONIBLES:
+  - analysisLevel = "limited"
+  - uxMessage debe advertir modo limitado
+  - competitors debe basarse solo en estimaciones públicas
+`.trim();
+
+    /* =========================
+       LLAMADA A OPENROUTER
+       ========================= */
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://legendary-crostata-cc8b9b.netlify.app",
-        "X-Title": "LocalPulse IA"
+        "HTTP-Referer": "https://tu-sitio.netlify.app",
+        "X-Title": "GBP Local Audit SaaS",
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: OPENROUTER_MODEL,
         temperature: 0.2,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      })
+          { role: "user", content: userPrompt },
+        ],
+      }),
     });
 
     const json = await response.json();
+    const rawContent = json?.choices?.[0]?.message?.content;
 
-    if (!json.choices?.[0]?.message?.content) {
-      throw new Error("Respuesta inválida del modelo");
+    /* =========================
+       BLINDAJE ANTI-CAÍDA TOTAL
+       ========================= */
+    let parsed;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch (err) {
+      console.error("Respuesta inválida de la IA:", rawContent);
+      throw new Error("La IA no devolvió JSON válido");
     }
-
-    // Parseo estricto del JSON devuelto por la IA
-    const parsed = JSON.parse(json.choices[0].message.content);
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsed)
+      body: JSON.stringify(parsed),
     };
 
   } catch (error: any) {
-    console.error("❌ Gemini/OpenRouter Function Error:", error);
+    console.error("Error en auditoría:", error);
 
     return {
       statusCode: 500,
       body: JSON.stringify({
         error: "No se pudo generar la auditoría con IA",
-        details: error.message
-      })
+      }),
     };
   }
 };
