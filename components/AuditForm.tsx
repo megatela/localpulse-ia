@@ -13,11 +13,17 @@ import {
 } from 'lucide-react';
 
 interface AuditFormProps {
-  onAudit: (data: GBPAuditData & { latitude?: number; longitude?: number }) => void;
+  onAudit: (data: GBPAuditData & {
+    coords: { lat: number; lng: number } | null;
+    locationMode: 'FULL' | 'LIMITED';
+  }) => void;
   loading: boolean;
 }
 
 const AuditForm: React.FC<AuditFormProps> = ({ onAudit, loading }) => {
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationMode, setLocationMode] = useState<'FULL' | 'LIMITED'>('LIMITED');
+  const [locationAttempted, setLocationAttempted] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<GBPAuditData>({
@@ -30,169 +36,121 @@ const AuditForm: React.FC<AuditFormProps> = ({ onAudit, loading }) => {
     hasReviews: false,
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLocationError(null);
+  const requestLocation = () => {
+    setLocationAttempted(true);
 
     if (!navigator.geolocation) {
       setLocationError('Tu navegador no soporta geolocalización.');
-      onAudit(formData);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const { latitude, longitude } = position.coords;
-
-        onAudit({
-          ...formData,
-          latitude,
-          longitude,
+        setCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
         });
+        setLocationMode('FULL');
+        setLocationError(null);
       },
-      (error) => {
-        console.warn('Geolocalización rechazada:', error);
+      () => {
+        setLocationMode('LIMITED');
         setLocationError(
-          'No se concedió acceso a la ubicación. La auditoría continuará en modo limitado.'
+          'No se concedió acceso a la ubicación. La auditoría se realizará en modo limitado.'
         );
-
-        onAudit(formData);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
       }
     );
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    onAudit({
+      ...formData,
+      coords,
+      locationMode,
+    });
   };
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-gray-100"
+      className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-gray-100 space-y-6"
     >
-      <div className="space-y-6">
+      {/* GEOLOCATION BLOCK */}
+      <div className="p-4 rounded-xl border border-dashed border-blue-300 bg-blue-50">
+        <div className="flex items-start space-x-3">
+          <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-bold text-blue-900">
+              Precisión Local (Recomendado)
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              La auditoría es más precisa si conocemos tu ubicación real. Puedes continuar sin
+              concederla, pero el análisis será limitado.
+            </p>
 
-        {/* MENSAJE DE UBICACIÓN */}
-        {locationError && (
-          <div className="flex items-start space-x-3 bg-amber-50 border border-amber-200 p-4 rounded-xl text-amber-800 text-sm">
-            <AlertTriangle className="w-5 h-5 mt-0.5" />
-            <p>{locationError}</p>
-          </div>
-        )}
+            {!locationAttempted && (
+              <button
+                type="button"
+                onClick={requestLocation}
+                className="mt-3 inline-flex items-center px-4 py-2 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Permitir ubicación
+              </button>
+            )}
 
-        {/* NOMBRE */}
-        <div>
-          <label className="block text-sm font-semibold mb-1">Nombre del Negocio</label>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              required
-              className="w-full pl-10 py-3 rounded-xl border"
-              value={formData.businessName}
-              onChange={(e) =>
-                setFormData({ ...formData, businessName: e.target.value })
-              }
-            />
-          </div>
-        </div>
+            {locationMode === 'FULL' && (
+              <p className="mt-3 text-xs font-bold text-green-700">
+                ✓ Ubicación detectada correctamente para análisis local preciso
+              </p>
+            )}
 
-        {/* CIUDAD */}
-        <div>
-          <label className="block text-sm font-semibold mb-1">Ciudad</label>
-          <div className="relative">
-            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              required
-              className="w-full pl-10 py-3 rounded-xl border"
-              value={formData.city}
-              onChange={(e) =>
-                setFormData({ ...formData, city: e.target.value })
-              }
-            />
+            {locationError && (
+              <p className="mt-3 text-xs text-amber-700 flex items-center">
+                <AlertTriangle className="w-4 h-4 mr-1" />
+                {locationError}
+              </p>
+            )}
           </div>
         </div>
-
-        {/* CATEGORÍA */}
-        <div>
-          <label className="block text-sm font-semibold mb-1">Categoría</label>
-          <div className="relative">
-            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              required
-              className="w-full pl-10 py-3 rounded-xl border"
-              value={formData.category}
-              onChange={(e) =>
-                setFormData({ ...formData, category: e.target.value })
-              }
-            />
-          </div>
-        </div>
-
-        {/* DESCRIPCIÓN */}
-        <div>
-          <label className="block text-sm font-semibold mb-1">Descripción</label>
-          <textarea
-            required
-            rows={4}
-            className="w-full p-4 rounded-xl border"
-            value={formData.description}
-            onChange={(e) =>
-              setFormData({ ...formData, description: e.target.value })
-            }
-          />
-        </div>
-
-        {/* WEBSITE */}
-        <div>
-          <label className="block text-sm font-semibold mb-1">
-            Sitio Web (opcional)
-          </label>
-          <input
-            type="url"
-            className="w-full p-4 rounded-xl border"
-            value={formData.website}
-            onChange={(e) =>
-              setFormData({ ...formData, website: e.target.value })
-            }
-          />
-        </div>
-
-        {/* CHECKBOXES */}
-        <div className="flex gap-6">
-          <label className="flex items-center gap-2">
-            <Camera className="w-4 h-4" />
-            <input
-              type="checkbox"
-              checked={formData.hasPhotos}
-              onChange={(e) =>
-                setFormData({ ...formData, hasPhotos: e.target.checked })
-              }
-            />
-            Tiene fotos
-          </label>
-
-          <label className="flex items-center gap-2">
-            <MessageSquare className="w-4 h-4" />
-            <input
-              type="checkbox"
-              checked={formData.hasReviews}
-              onChange={(e) =>
-                setFormData({ ...formData, hasReviews: e.target.checked })
-              }
-            />
-            Tiene reseñas
-          </label>
-        </div>
-
-        {/* SUBMIT */}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold"
-        >
-          {loading ? 'Ejecutando auditoría…' : 'Realizar auditoría con IA'}
-        </button>
       </div>
+
+      {/* FORM FIELDS */}
+      <div>
+        <label className="text-sm font-semibold text-gray-700">Nombre del Negocio</label>
+        <input
+          required
+          className="w-full mt-1 p-3 rounded-xl border"
+          value={formData.businessName}
+          onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-semibold text-gray-700">Ciudad / Localidad</label>
+        <input
+          required
+          className="w-full mt-1 p-3 rounded-xl border"
+          value={formData.city}
+          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+        />
+      </div>
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full py-4 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700"
+      >
+        {loading ? (
+          <span className="flex items-center justify-center">
+            <Loader2 className="animate-spin mr-2" />
+            Ejecutando auditoría…
+          </span>
+        ) : (
+          'Realizar Auditoría con IA'
+        )}
+      </button>
     </form>
   );
 };
