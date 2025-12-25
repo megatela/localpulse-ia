@@ -1,137 +1,146 @@
-import React from "react";
+import { useState } from "react";
+import AuditForm from "./AuditForm";
 
-interface Competitor {
-  name: string;
-  rating: number;
-  reviews: number;
-}
-
-interface AuditResult {
-  score: number;
+type AuditResult = {
   summary: string;
+  score: number;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
-  keywords: string[];
-  competitors: Competitor[];
-}
+  isDemo: boolean;
+};
 
-interface AuditDashboardProps {
-  result: {
-    success: boolean;
-    mode: "demo" | "full";
-    audit: AuditResult;
-    warnings?: string[];
-  } | null;
-}
+export default function AuditDashboard() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<AuditResult | null>(null);
 
-const AuditDashboard: React.FC<AuditDashboardProps> = ({ result }) => {
-  if (!result || !result.audit) {
-    return (
-      <div className="text-center text-gray-500 mt-8">
-        No hay resultados de auditoría para mostrar.
-      </div>
-    );
-  }
+  const runAudit = async ({
+    businessName,
+    address,
+    coords,
+    isDemo,
+  }: {
+    businessName: string;
+    address: string;
+    coords: { lat: number; lng: number } | null;
+    isDemo: boolean;
+  }) => {
+    setLoading(true);
+    setError(null);
+    setResult(null);
 
-  const { audit, mode, warnings } = result;
+    try {
+      const response = await fetch("/.netlify/functions/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessName,
+          address,
+          coords,
+          isDemo,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("El servidor no pudo generar la auditoría.");
+      }
+
+      const data = await response.json();
+
+      // 🔒 Blindaje absoluto del frontend
+      if (
+        !data ||
+        typeof data !== "object" ||
+        !data.summary ||
+        !Array.isArray(data.recommendations)
+      ) {
+        throw new Error("Respuesta inválida de la IA.");
+      }
+
+      setResult({
+        summary: data.summary,
+        score: data.score ?? 0,
+        strengths: data.strengths ?? [],
+        weaknesses: data.weaknesses ?? [],
+        recommendations: data.recommendations,
+        isDemo: Boolean(data.isDemo),
+      });
+    } catch (err: any) {
+      setError(
+        err.message ||
+          "No se pudo generar la auditoría con IA. Intenta nuevamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="max-w-4xl mx-auto mt-10 space-y-8">
-      {/* Header */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <h2 className="text-2xl font-bold mb-2">
-          Resultado de Auditoría SEO Local
-        </h2>
+    <div className="audit-dashboard">
+      <AuditForm onAudit={runAudit} />
 
-        <p className="text-gray-600 mb-4">{audit.summary}</p>
-
-        <div className="flex items-center gap-4">
-          <div className="text-4xl font-bold text-blue-600">
-            {audit.score}/100
-          </div>
-          <span className="px-3 py-1 rounded-full text-sm font-semibold bg-gray-100">
-            Modo {mode.toUpperCase()}
-          </span>
+      {/* Estado: cargando */}
+      {loading && (
+        <div className="audit-loading">
+          <p>Analizando el perfil del negocio…</p>
+          <p>Esto puede tardar unos segundos.</p>
         </div>
-      </div>
+      )}
 
-      {/* Warnings */}
-      {warnings && warnings.length > 0 && (
-        <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4">
-          <ul className="list-disc list-inside text-yellow-800 text-sm">
-            {warnings.map((w, i) => (
-              <li key={i}>{w}</li>
+      {/* Estado: error */}
+      {error && (
+        <div className="audit-error">
+          <p style={{ color: "red" }}>{error}</p>
+        </div>
+      )}
+
+      {/* Estado: resultado */}
+      {result && !loading && (
+        <div className="audit-result">
+          {result.isDemo && (
+            <p style={{ fontStyle: "italic", color: "#777" }}>
+              Estás viendo una auditoría DEMO. Para resultados reales,
+              habilita la ubicación.
+            </p>
+          )}
+
+          <h3>Resumen</h3>
+          <p>{result.summary}</p>
+
+          <h3>Puntuación</h3>
+          <strong>{result.score} / 100</strong>
+
+          {result.strengths.length > 0 && (
+            <>
+              <h3>Fortalezas</h3>
+              <ul>
+                {result.strengths.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {result.weaknesses.length > 0 && (
+            <>
+              <h3>Debilidades</h3>
+              <ul>
+                {result.weaknesses.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <h3>Recomendaciones</h3>
+          <ul>
+            {result.recommendations.map((r, i) => (
+              <li key={i}>{r}</li>
             ))}
           </ul>
         </div>
       )}
-
-      {/* Strengths & Weaknesses */}
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-green-50 rounded-xl p-6">
-          <h3 className="font-bold text-green-700 mb-3">Fortalezas</h3>
-          <ul className="list-disc list-inside space-y-1">
-            {audit.strengths.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="bg-red-50 rounded-xl p-6">
-          <h3 className="font-bold text-red-700 mb-3">Debilidades</h3>
-          <ul className="list-disc list-inside space-y-1">
-            {audit.weaknesses.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* Recommendations */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-bold mb-3">Recomendaciones Prioritarias</h3>
-        <ol className="list-decimal list-inside space-y-1">
-          {audit.recommendations.map((r, i) => (
-            <li key={i}>{r}</li>
-          ))}
-        </ol>
-      </div>
-
-      {/* Keywords */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-bold mb-3">Keywords sugeridas</h3>
-        <div className="flex flex-wrap gap-2">
-          {audit.keywords.map((k, i) => (
-            <span
-              key={i}
-              className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 text-sm"
-            >
-              {k}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Competitors */}
-      <div className="bg-white rounded-xl shadow p-6">
-        <h3 className="font-bold mb-3">Competidores locales</h3>
-        <div className="space-y-3">
-          {audit.competitors.map((c, i) => (
-            <div
-              key={i}
-              className="flex justify-between items-center border-b pb-2"
-            >
-              <span className="font-medium">{c.name}</span>
-              <span className="text-sm text-gray-600">
-                ⭐ {c.rating} · {c.reviews} reseñas
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
-};
-
-export default AuditDashboard;
+}
