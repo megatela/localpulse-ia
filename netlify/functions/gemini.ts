@@ -2,112 +2,92 @@ import type { Handler } from "@netlify/functions";
 
 const SYSTEM_PROMPT = `
 Eres un auditor profesional de SEO Local especializado en Google Business Profile.
-
-REGLAS ESTRICTAS:
-- No inventes datos.
-- No simules posiciones, métricas ni competidores reales.
-- Si falta información, indícalo claramente.
-- Diferencia DEMO vs FULL.
-- Sin ubicación: análisis limitado, explícito.
-- Responde siempre en español claro, estructurado y accionable.
+NO inventes datos.
+NO asumas acceso a información privada.
+Si faltan datos (ubicación, reviews, etc), debes indicarlo claramente y continuar en modo limitado.
+Entrega siempre recomendaciones accionables, honestas y realistas.
 `;
 
 export const handler: Handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, body: "Method Not Allowed" };
+  }
+
   try {
-    if (event.httpMethod !== "POST") {
-      return {
-        statusCode: 405,
-        body: JSON.stringify({ error: "Method Not Allowed" }),
-      };
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error("OPENROUTER_API_KEY no configurada");
     }
 
-    const body = JSON.parse(event.body || "{}");
+    const { data, coords } = JSON.parse(event.body || "{}");
 
-    const {
-      businessName,
-      category,
-      website,
-      hasPhotos,
-      hasReviews,
-      location, // { lat, lng } | null
-      mode = "demo",
-    } = body;
-
-    if (!businessName || !category) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          error: "Datos insuficientes para la auditoría",
-        }),
-      };
-    }
-
-    const hasLocation =
-      location && typeof location.lat === "number" && typeof location.lng === "number";
-
-    const locationText = hasLocation
-      ? `Ubicación detectada: lat ${location.lat}, lng ${location.lng}`
-      : `Ubicación NO proporcionada. Ejecutar auditoría en modo DEMO limitado.`;
+    const hasCoords = coords?.lat && coords?.lng;
 
     const userPrompt = `
-Audita el perfil de Google Business Profile con los siguientes datos:
+Negocio: ${data?.businessName || "No especificado"}
+Ciudad: ${data?.city || "No especificada"}
+Categoría: ${data?.category || "No especificada"}
+Descripción actual: ${data?.description || "No proporcionada"}
 
-Nombre del negocio: ${businessName}
-Categoría: ${category}
-Sitio web: ${website || "No proporcionado"}
-Tiene fotos: ${hasPhotos ? "Sí" : "No"}
-Tiene reseñas: ${hasReviews ? "Sí" : "No"}
-Modo: ${mode.toUpperCase()}
+Ubicación del usuario:
+${hasCoords ? `Lat ${coords.lat}, Lng ${coords.lng}` : "NO DISPONIBLE (modo DEMO)"}
 
-${locationText}
-
-ENTREGA OBLIGATORIA:
-1. Evaluación general del perfil
-2. Qué falta para ser un perfil 5 estrellas
-3. Recomendaciones claras y accionables
-4. Implementación de keywords (explicar dónde usar cada una)
-5. Advertencia explícita si el análisis es limitado
+Instrucciones:
+- Si no hay ubicación, indica claramente que el análisis es limitado.
+- NO inventes competidores.
+- Sugiere keywords locales realistas.
+- Indica qué falta para una auditoría 5 estrellas.
 `;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://localpulse.ai",
-        "X-Title": "LocalPulse IA",
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
+          { role: "user", content: userPrompt }
         ],
-        temperature: 0.2,
-      }),
+        temperature: 0.3
+      })
     });
 
-    const data = await response.json();
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`OpenRouter error: ${errText}`);
+    }
+
+    const json = await response.json();
+    const content = json.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error("Respuesta vacía de IA");
+    }
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        ok: true,
-        mode,
-        limited: !hasLocation,
-        result: data?.choices?.[0]?.message?.content || "Sin respuesta de IA",
-      }),
+        mode: hasCoords ? "FULL" : "DEMO",
+        warning: hasCoords
+          ? null
+          : "Modo limitado: sin ubicación no es posible un análisis competitivo real.",
+        audit: content
+      })
     };
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Error desconocido";
+
+  } catch (error: any) {
+    console.error("Gemini Function Error:", error.message);
 
     return {
-      statusCode: 500,
+      statusCode: 200, // ⚠️ IMPORTANTE: NO 500
       body: JSON.stringify({
-        error: "Fallo en el servidor",
-        detail: message,
-      }),
+        mode: "DEMO",
+        error: "No se pudo ejecutar la auditoría completa",
+        message:
+          "La auditoría se ejecutó en modo limitado. Para resultados completos, permite la ubicación o inténtalo más tarde."
+      })
     };
   }
 };
