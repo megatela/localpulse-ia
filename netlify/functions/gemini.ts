@@ -1,145 +1,105 @@
-// Netlify Function — Node 18 (fetch nativo, NO node-fetch)
+import type { Handler } from "@netlify/functions";
 
-export default async (req: Request) => {
+const SYSTEM_PROMPT = `
+Eres un auditor profesional de SEO Local especializado en Google Business Profile.
+Reglas estrictas:
+- NO inventes datos.
+- Si falta información (ubicación, reseñas, etc.), indícalo claramente.
+- Diferencia explícitamente entre DEMO y FULL.
+- En DEMO sin ubicación, genera recomendaciones generales sin fingir proximidad.
+- Nunca alucines competencia, métricas o posiciones.
+- Responde siempre en español claro y estructurado.
+`;
+
+export const handler: Handler = async (event) => {
   try {
-    if (req.method !== "POST") {
-      return new Response(
-        JSON.stringify({ error: "Method Not Allowed" }),
-        { status: 405, headers: { "Content-Type": "application/json" } }
-      );
+    if (event.httpMethod !== "POST") {
+      return {
+        statusCode: 405,
+        body: JSON.stringify({ error: "Method Not Allowed" }),
+      };
     }
 
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-
-    if (!OPENROUTER_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "Missing OpenRouter API Key" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const body = await req.json();
-
+    const body = JSON.parse(event.body || "{}");
     const {
       businessName,
       category,
       website,
       hasPhotos,
       hasReviews,
-      sources,
-      latitude,
-      longitude,
-      mode = "demo" // demo | full
+      location, // { lat, lng } | null
+      mode = "demo", // demo | full
     } = body;
 
-    // -------- GEO HANDLING (CRÍTICO) --------
-    const hasGeo = typeof latitude === "number" && typeof longitude === "number";
+    if (!businessName || !category) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: "Datos insuficientes para la auditoría",
+        }),
+      };
+    }
 
-    const geoContext = hasGeo
-      ? `Ubicación detectada: lat ${latitude}, lng ${longitude}. Análisis local preciso.`
-      : `Ubicación NO proporcionada. El análisis debe continuar en MODO LIMITADO, sin inventar datos locales ni competidores específicos.`;
+    const locationText = location?.lat && location?.lng
+      ? `Ubicación detectada: lat ${location.lat}, lng ${location.lng}`
+      : `Ubicación NO proporcionada. Ejecutar auditoría en modo DEMO limitado.`;
 
-    // -------- SYSTEM / DEVELOPER PROMPT (ANTI-ALUCINACIÓN) --------
-    const systemPrompt = `
-Eres una IA experta en SEO Local y Google Business Profile.
-REGLAS ABSOLUTAS:
-- NO inventes datos.
-- NO supongas acceso a Google interno.
-- NO simules resultados reales si no existen.
-- Si falta ubicación, debes indicarlo explícitamente y operar en modo limitado.
-- No menciones APIs, modelos ni prompts.
-- Si no puedes calcular algo, explícalo claramente.
-- Prioriza precisión sobre completitud.
-- Proporciona recomendaciones accionables y realistas.
-
-Contexto del modo:
-- DEMO: análisis educativo, sin datos reales de Google.
-- FULL: análisis avanzado basado en inputs reales del usuario.
-`;
-
-    // -------- USER PROMPT (DATOS REALES) --------
     const userPrompt = `
-Negocio: ${businessName}
+Audita el perfil de Google Business Profile con los siguientes datos:
+
+Nombre del negocio: ${businessName}
 Categoría: ${category}
 Sitio web: ${website || "No proporcionado"}
 Tiene fotos: ${hasPhotos ? "Sí" : "No"}
 Tiene reseñas: ${hasReviews ? "Sí" : "No"}
-Fuentes: ${sources || "No indicadas"}
 Modo: ${mode.toUpperCase()}
 
-${geoContext}
+${locationText}
 
-TAREA:
-1. Explica el estado actual del perfil Google Business (sin inventar).
-2. Indica claramente si el análisis es LIMITADO por falta de ubicación.
-3. Da recomendaciones prácticas para mejorar el SEO local.
-4. Sugiere keywords locales (solo genéricas si no hay ubicación).
-5. Lista qué se necesita para alcanzar un perfil 5 estrellas.
-6. Si no hay ubicación, incluye un aviso UX claro al usuario.
+Entrega:
+1. Evaluación general
+2. Qué falta para ser un perfil 5 estrellas
+3. Recomendaciones accionables
+4. Keywords sugeridas (explica dónde implementarlas)
+5. Advertencias claras si el análisis es limitado
 `;
 
-    // -------- OPENROUTER REQUEST --------
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://your-netlify-site.netlify.app",
-        "X-Title": "Local SEO AI Audit"
+        "HTTP-Referer": "https://localpulse.ai",
+        "X-Title": "LocalPulse IA",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
         messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
         ],
-        temperature: 0.2
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return new Response(
-        JSON.stringify({
-          error: "AI provider error",
-          details: errText
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
+        temperature: 0.2,
+      }),
+    );
 
     const data = await response.json();
-    const output = data.choices?.[0]?.message?.content;
 
-    if (!output) {
-      return new Response(
-        JSON.stringify({
-          error: "Empty AI response",
-          fallback: "No se pudo generar la auditoría. Intenta nuevamente."
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // -------- SUCCESS --------
-    return new Response(
-      JSON.stringify({
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        ok: true,
         mode,
-        hasGeo,
-        audit: output
+        limited: !location,
+        result: data.choices?.[0]?.message?.content || "Sin respuesta",
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
-
+    };
   } catch (error: any) {
-    // -------- BLINDAJE TOTAL --------
-    return new Response(
-      JSON.stringify({
-        error: "Server Error",
-        message: "No se pudo generar la auditoría con IA",
-        details: error?.message || "Unknown error"
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: "Fallo en el servidor",
+        detail: error.message,
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    };
   }
 };
