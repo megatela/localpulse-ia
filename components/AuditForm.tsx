@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { GBPAuditData } from '../types';
+import React, { useState } from "react";
+import { GBPAuditData } from "../types";
 import {
   Search,
   MapPin,
@@ -9,148 +9,235 @@ import {
   Camera,
   MessageSquare,
   Loader2,
-  AlertTriangle
-} from 'lucide-react';
+  AlertTriangle,
+} from "lucide-react";
 
 interface AuditFormProps {
-  onAudit: (data: GBPAuditData & {
-    coords: { lat: number; lng: number } | null;
-    locationMode: 'FULL' | 'LIMITED';
-  }) => void;
+  onAudit: (
+    data: GBPAuditData,
+    coords?: { lat: number; lng: number }
+  ) => void;
   loading: boolean;
 }
 
 const AuditForm: React.FC<AuditFormProps> = ({ onAudit, loading }) => {
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [locationMode, setLocationMode] = useState<'FULL' | 'LIMITED'>('LIMITED');
-  const [locationAttempted, setLocationAttempted] = useState(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-
   const [formData, setFormData] = useState<GBPAuditData>({
-    businessName: '',
-    city: '',
-    category: '',
-    description: '',
-    website: '',
+    businessName: "",
+    city: "",
+    category: "",
+    description: "",
+    website: "",
     hasPhotos: false,
     hasReviews: false,
   });
 
-  const requestLocation = () => {
-    setLocationAttempted(true);
+  const [geoStatus, setGeoStatus] = useState<
+    "idle" | "requesting" | "granted" | "denied"
+  >("idle");
 
-    if (!navigator.geolocation) {
-      setLocationError('Tu navegador no soporta geolocalización.');
-      return;
-    }
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | undefined>(
+    undefined
+  );
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLocationMode('FULL');
-        setLocationError(null);
-      },
-      () => {
-        setLocationMode('LIMITED');
-        setLocationError(
-          'No se concedió acceso a la ubicación. La auditoría se realizará en modo limitado.'
-        );
+  const requestGeolocation = (): Promise<{ lat: number; lng: number } | null> => {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        setGeoStatus("denied");
+        resolve(null);
+        return;
       }
-    );
+
+      setGeoStatus("requesting");
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          setCoords(location);
+          setGeoStatus("granted");
+          resolve(location);
+        },
+        () => {
+          setGeoStatus("denied");
+          resolve(null);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    onAudit({
-      ...formData,
-      coords,
-      locationMode,
-    });
+    const location = await requestGeolocation();
+
+    onAudit(formData, location || undefined);
   };
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-gray-100 space-y-6"
+      className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl mx-auto border border-gray-100"
     >
-      {/* GEOLOCATION BLOCK */}
-      <div className="p-4 rounded-xl border border-dashed border-blue-300 bg-blue-50">
-        <div className="flex items-start space-x-3">
-          <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-bold text-blue-900">
-              Precisión Local (Recomendado)
-            </p>
-            <p className="text-xs text-blue-700 mt-1">
-              La auditoría es más precisa si conocemos tu ubicación real. Puedes continuar sin
-              concederla, pero el análisis será limitado.
-            </p>
-
-            {!locationAttempted && (
-              <button
-                type="button"
-                onClick={requestLocation}
-                className="mt-3 inline-flex items-center px-4 py-2 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-              >
-                Permitir ubicación
-              </button>
-            )}
-
-            {locationMode === 'FULL' && (
-              <p className="mt-3 text-xs font-bold text-green-700">
-                ✓ Ubicación detectada correctamente para análisis local preciso
-              </p>
-            )}
-
-            {locationError && (
-              <p className="mt-3 text-xs text-amber-700 flex items-center">
-                <AlertTriangle className="w-4 h-4 mr-1" />
-                {locationError}
-              </p>
-            )}
+      <div className="space-y-6">
+        {/* Nombre */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Nombre del Negocio
+          </label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <input
+              required
+              type="text"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200"
+              value={formData.businessName}
+              onChange={(e) =>
+                setFormData({ ...formData, businessName: e.target.value })
+              }
+            />
           </div>
         </div>
-      </div>
 
-      {/* FORM FIELDS */}
-      <div>
-        <label className="text-sm font-semibold text-gray-700">Nombre del Negocio</label>
-        <input
-          required
-          className="w-full mt-1 p-3 rounded-xl border"
-          value={formData.businessName}
-          onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
-        />
-      </div>
+        {/* Ciudad y categoría */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Ciudad / Localidad
+            </label>
+            <div className="relative">
+              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                required
+                type="text"
+                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200"
+                value={formData.city}
+                onChange={(e) =>
+                  setFormData({ ...formData, city: e.target.value })
+                }
+              />
+            </div>
+          </div>
 
-      <div>
-        <label className="text-sm font-semibold text-gray-700">Ciudad / Localidad</label>
-        <input
-          required
-          className="w-full mt-1 p-3 rounded-xl border"
-          value={formData.city}
-          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-        />
-      </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Categoría Principal
+            </label>
+            <div className="relative">
+              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                required
+                type="text"
+                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200"
+                value={formData.category}
+                onChange={(e) =>
+                  setFormData({ ...formData, category: e.target.value })
+                }
+              />
+            </div>
+          </div>
+        </div>
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full py-4 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700"
-      >
-        {loading ? (
-          <span className="flex items-center justify-center">
-            <Loader2 className="animate-spin mr-2" />
-            Ejecutando auditoría…
-          </span>
-        ) : (
-          'Realizar Auditoría con IA'
+        {/* Descripción */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Descripción Actual
+          </label>
+          <div className="relative">
+            <FileText className="absolute left-3 top-4 text-gray-400 w-5 h-5" />
+            <textarea
+              required
+              rows={4}
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200"
+              value={formData.description}
+              onChange={(e) =>
+                setFormData({ ...formData, description: e.target.value })
+              }
+            />
+          </div>
+        </div>
+
+        {/* Website */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Sitio Web (Opcional)
+          </label>
+          <div className="relative">
+            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <input
+              type="url"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200"
+              value={formData.website}
+              onChange={(e) =>
+                setFormData({ ...formData, website: e.target.value })
+              }
+            />
+          </div>
+        </div>
+
+        {/* Toggles */}
+        <div className="flex flex-wrap gap-6">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={formData.hasPhotos}
+              onChange={(e) =>
+                setFormData({ ...formData, hasPhotos: e.target.checked })
+              }
+            />
+            <Camera className="w-4 h-4" /> Tiene Fotos
+          </label>
+
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={formData.hasReviews}
+              onChange={(e) =>
+                setFormData({ ...formData, hasReviews: e.target.checked })
+              }
+            />
+            <MessageSquare className="w-4 h-4" /> Tiene Reseñas
+          </label>
+        </div>
+
+        {/* Geolocalización UX */}
+        {geoStatus === "denied" && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-4 rounded-xl text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+            <p>
+              No se concedió acceso a la ubicación. La auditoría continuará en
+              <strong> modo limitado</strong>, sin análisis de proximidad ni
+              competencia local real.
+            </p>
+          </div>
         )}
-      </button>
+
+        {/* Submit */}
+        <button
+          disabled={loading}
+          type="submit"
+          className={`w-full py-4 rounded-xl font-bold text-white ${
+            loading
+              ? "bg-blue-400 cursor-not-allowed"
+              : "bg-gradient-to-r from-blue-600 to-indigo-600"
+          }`}
+        >
+          {loading ? (
+            <span className="flex justify-center items-center">
+              <Loader2 className="animate-spin mr-2 h-5 w-5" />
+              Ejecutando auditoría...
+            </span>
+          ) : (
+            "Realizar Auditoría con IA"
+          )}
+        </button>
+      </div>
     </form>
   );
 };
