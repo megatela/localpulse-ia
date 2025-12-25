@@ -2,13 +2,14 @@ import type { Handler } from "@netlify/functions";
 
 const SYSTEM_PROMPT = `
 Eres un auditor profesional de SEO Local especializado en Google Business Profile.
-Reglas estrictas:
-- NO inventes datos.
-- Si falta información (ubicación, reseñas, etc.), indícalo claramente.
-- Diferencia explícitamente entre DEMO y FULL.
-- En DEMO sin ubicación, genera recomendaciones generales sin fingir proximidad.
-- Nunca alucines competencia, métricas o posiciones.
-- Responde siempre en español claro y estructurado.
+
+REGLAS ESTRICTAS:
+- No inventes datos.
+- No simules posiciones, métricas ni competidores reales.
+- Si falta información, indícalo claramente.
+- Diferencia DEMO vs FULL.
+- Sin ubicación: análisis limitado, explícito.
+- Responde siempre en español claro, estructurado y accionable.
 `;
 
 export const handler: Handler = async (event) => {
@@ -21,6 +22,7 @@ export const handler: Handler = async (event) => {
     }
 
     const body = JSON.parse(event.body || "{}");
+
     const {
       businessName,
       category,
@@ -28,7 +30,7 @@ export const handler: Handler = async (event) => {
       hasPhotos,
       hasReviews,
       location, // { lat, lng } | null
-      mode = "demo", // demo | full
+      mode = "demo",
     } = body;
 
     if (!businessName || !category) {
@@ -40,7 +42,10 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    const locationText = location?.lat && location?.lng
+    const hasLocation =
+      location && typeof location.lat === "number" && typeof location.lng === "number";
+
+    const locationText = hasLocation
       ? `Ubicación detectada: lat ${location.lat}, lng ${location.lng}`
       : `Ubicación NO proporcionada. Ejecutar auditoría en modo DEMO limitado.`;
 
@@ -56,18 +61,18 @@ Modo: ${mode.toUpperCase()}
 
 ${locationText}
 
-Entrega:
-1. Evaluación general
+ENTREGA OBLIGATORIA:
+1. Evaluación general del perfil
 2. Qué falta para ser un perfil 5 estrellas
-3. Recomendaciones accionables
-4. Keywords sugeridas (explica dónde implementarlas)
-5. Advertencias claras si el análisis es limitado
+3. Recomendaciones claras y accionables
+4. Implementación de keywords (explicar dónde usar cada una)
+5. Advertencia explícita si el análisis es limitado
 `;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://localpulse.ai",
         "X-Title": "LocalPulse IA",
@@ -80,7 +85,7 @@ Entrega:
         ],
         temperature: 0.2,
       }),
-    );
+    });
 
     const data = await response.json();
 
@@ -89,16 +94,19 @@ Entrega:
       body: JSON.stringify({
         ok: true,
         mode,
-        limited: !location,
-        result: data.choices?.[0]?.message?.content || "Sin respuesta",
+        limited: !hasLocation,
+        result: data?.choices?.[0]?.message?.content || "Sin respuesta de IA",
       }),
     };
-  } catch (error: any) {
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Error desconocido";
+
     return {
       statusCode: 500,
       body: JSON.stringify({
         error: "Fallo en el servidor",
-        detail: error.message,
+        detail: message,
       }),
     };
   }
