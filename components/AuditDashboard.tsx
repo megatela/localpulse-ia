@@ -1,155 +1,137 @@
 import React from "react";
 
-type AuditResult = {
-  mode?: "DEMO" | "FULL";
-  locationUsed?: boolean;
-  summary?: {
-    score?: number;
-    verdict?: string;
-  };
-  optimizedDescription?: string | null;
-  keywords?: {
-    primary?: string[] | null;
-    secondary?: string[] | null;
-  } | null;
-  categories?: string[] | null;
-  attributes?: string[] | null;
-  notes?: string | null;
-};
-
-interface Props {
-  audit: AuditResult | null;
+interface Competitor {
+  name: string;
+  rating: number;
+  reviews: number;
 }
 
-export default function AuditDashboard({ audit }: Props) {
-  // 🛡️ Blindaje total
-  if (!audit) {
+interface AuditResult {
+  score: number;
+  summary: string;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  keywords: string[];
+  competitors: Competitor[];
+}
+
+interface AuditDashboardProps {
+  result: {
+    success: boolean;
+    mode: "demo" | "full";
+    audit: AuditResult;
+    warnings?: string[];
+  } | null;
+}
+
+const AuditDashboard: React.FC<AuditDashboardProps> = ({ result }) => {
+  if (!result || !result.audit) {
     return (
-      <div className="p-6 text-center text-gray-500">
+      <div className="text-center text-gray-500 mt-8">
         No hay resultados de auditoría para mostrar.
       </div>
     );
   }
 
-  const mode = audit.mode ?? "DEMO";
-  const score = audit.summary?.score ?? 0;
-  const verdict =
-    audit.summary?.verdict ??
-    "No se pudo generar un veredicto automático.";
-
-  const description =
-    audit.optimizedDescription ??
-    "No se generó una descripción optimizada en este análisis.";
-
-  const primaryKeywords = audit.keywords?.primary ?? [];
-  const secondaryKeywords = audit.keywords?.secondary ?? [];
-
-  const categories = audit.categories ?? [];
-  const attributes = audit.attributes ?? [];
+  const { audit, mode, warnings } = result;
 
   return (
-    <div className="space-y-8 p-6">
-      {/* HEADER */}
-      <div className="border-b pb-4">
-        <h2 className="text-2xl font-semibold">
-          Auditoría de Perfil Google Business
+    <div className="max-w-4xl mx-auto mt-10 space-y-8">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow p-6">
+        <h2 className="text-2xl font-bold mb-2">
+          Resultado de Auditoría SEO Local
         </h2>
-        <p className="text-sm text-gray-500">
-          Modo: <strong>{mode}</strong>{" "}
-          {mode === "DEMO" && "— análisis limitado sin ubicación exacta"}
-        </p>
+
+        <p className="text-gray-600 mb-4">{audit.summary}</p>
+
+        <div className="flex items-center gap-4">
+          <div className="text-4xl font-bold text-blue-600">
+            {audit.score}/100
+          </div>
+          <span className="px-3 py-1 rounded-full text-sm font-semibold bg-gray-100">
+            Modo {mode.toUpperCase()}
+          </span>
+        </div>
       </div>
 
-      {/* SCORE */}
-      <section>
-        <h3 className="font-medium">Puntuación General</h3>
-        <p className="text-3xl font-bold">{score}/100</p>
-        <p className="text-gray-600">{verdict}</p>
-      </section>
-
-      {/* DESCRIPTION */}
-      <section>
-        <h3 className="font-medium mb-2">Descripción Optimizada</h3>
-        <p className="text-gray-700 whitespace-pre-line">
-          {description}
-        </p>
-      </section>
-
-      {/* KEYWORDS */}
-      <section>
-        <h3 className="font-medium mb-2">Palabras Clave</h3>
-
-        <div className="mb-2">
-          <strong>Primarias:</strong>
-          {primaryKeywords.length ? (
-            <ul className="list-disc ml-6">
-              {primaryKeywords.map((kw, i) => (
-                <li key={i}>{kw}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-gray-500">
-              No se identificaron keywords primarias.
-            </p>
-          )}
-        </div>
-
-        <div>
-          <strong>Secundarias:</strong>
-          {secondaryKeywords.length ? (
-            <ul className="list-disc ml-6">
-              {secondaryKeywords.map((kw, i) => (
-                <li key={i}>{kw}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-gray-500">
-              No se identificaron keywords secundarias.
-            </p>
-          )}
-        </div>
-      </section>
-
-      {/* CATEGORIES */}
-      <section>
-        <h3 className="font-medium mb-2">Categorías Recomendadas</h3>
-        {categories.length ? (
-          <ul className="list-disc ml-6">
-            {categories.map((cat, i) => (
-              <li key={i}>{cat}</li>
+      {/* Warnings */}
+      {warnings && warnings.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4">
+          <ul className="list-disc list-inside text-yellow-800 text-sm">
+            {warnings.map((w, i) => (
+              <li key={i}>{w}</li>
             ))}
           </ul>
-        ) : (
-          <p className="text-gray-500">
-            No se pudieron sugerir categorías.
-          </p>
-        )}
-      </section>
-
-      {/* ATTRIBUTES */}
-      <section>
-        <h3 className="font-medium mb-2">Atributos Sugeridos</h3>
-        {attributes.length ? (
-          <ul className="list-disc ml-6">
-            {attributes.map((attr, i) => (
-              <li key={i}>{attr}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-gray-500">
-            Atributos no disponibles en este modo.
-          </p>
-        )}
-      </section>
-
-      {/* FOOTER DEMO NOTICE */}
-      {mode === "DEMO" && (
-        <div className="mt-6 rounded border border-yellow-300 bg-yellow-50 p-4 text-sm">
-          <strong>Nota:</strong> Este análisis se ejecutó en modo DEMO.
-          Para una auditoría completa con datos locales precisos,
-          es necesario permitir la geolocalización y usar el plan FULL.
         </div>
       )}
+
+      {/* Strengths & Weaknesses */}
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="bg-green-50 rounded-xl p-6">
+          <h3 className="font-bold text-green-700 mb-3">Fortalezas</h3>
+          <ul className="list-disc list-inside space-y-1">
+            {audit.strengths.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="bg-red-50 rounded-xl p-6">
+          <h3 className="font-bold text-red-700 mb-3">Debilidades</h3>
+          <ul className="list-disc list-inside space-y-1">
+            {audit.weaknesses.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* Recommendations */}
+      <div className="bg-white rounded-xl shadow p-6">
+        <h3 className="font-bold mb-3">Recomendaciones Prioritarias</h3>
+        <ol className="list-decimal list-inside space-y-1">
+          {audit.recommendations.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ol>
+      </div>
+
+      {/* Keywords */}
+      <div className="bg-white rounded-xl shadow p-6">
+        <h3 className="font-bold mb-3">Keywords sugeridas</h3>
+        <div className="flex flex-wrap gap-2">
+          {audit.keywords.map((k, i) => (
+            <span
+              key={i}
+              className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 text-sm"
+            >
+              {k}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Competitors */}
+      <div className="bg-white rounded-xl shadow p-6">
+        <h3 className="font-bold mb-3">Competidores locales</h3>
+        <div className="space-y-3">
+          {audit.competitors.map((c, i) => (
+            <div
+              key={i}
+              className="flex justify-between items-center border-b pb-2"
+            >
+              <span className="font-medium">{c.name}</span>
+              <span className="text-sm text-gray-600">
+                ⭐ {c.rating} · {c.reviews} reseñas
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
-}
+};
+
+export default AuditDashboard;
