@@ -1,168 +1,208 @@
+// netlify/functions/gemini.ts
 import type { Handler } from "@netlify/functions";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const SYSTEM_PROMPT = `
-Eres un motor de auditoría SEO LOCAL para Google Business Profile.
-NO inventes datos.
-NO afirmes acceso a APIs privadas de Google.
-Si falta información (ej. ubicación), debes indicarlo claramente.
+Eres un motor de auditoría SEO LOCAL REAL para perfiles de Google Business Profile.
+NO SIMULAS datos. NO INVENTAS métricas. NO ALUCINAS.
 
-Responde EXCLUSIVAMENTE en JSON válido, sin texto adicional.
+REGLAS OBLIGATORIAS:
+- Si un dato no puede determinarse, usa null y explica la limitación.
+- Si no hay coordenadas, el modo es DEMO LIMITADO.
+- Devuelve SIEMPRE un JSON válido, incluso ante errores.
+- NO incluyas texto fuera del JSON.
+- NO uses Markdown.
 
-Estructura OBLIGATORIA:
+FORMATO DE RESPUESTA OBLIGATORIO (JSON ESTRICTO):
+
 {
-  "score": number,
-  "summary": string,
-  "strengths": string[],
-  "weaknesses": string[],
-  "recommendations": string[],
-  "keywords": string[],
-  "competitors": {
-    "name": string,
-    "rating": number,
-    "reviews": number
-  }[]
+  "mode": "demo" | "full",
+  "geo": {
+    "lat": number | null,
+    "lng": number | null,
+    "precision": "alta" | "media" | "baja"
+  },
+  "summary": {
+    "score": number,
+    "level": "excelente" | "bueno" | "regular" | "critico",
+    "explanation": string
+  },
+  "warnings": string[],
+  "checklist": {
+    "completo": string[],
+    "incompleto": string[],
+    "faltante": string[]
+  },
+  "keywords": {
+    "actuales": string[],
+    "recomendadas": string[],
+    "implementacion": {
+      "titulo": string[],
+      "descripcion": string[],
+      "posts": string[]
+    }
+  },
+  "atributos": {
+    "presentes": string[],
+    "faltantes": string[]
+  },
+  "reviews": {
+    "cantidad_estimada": number | null,
+    "rating_estimado": number | null,
+    "recomendaciones": string[]
+  },
+  "competidores": [
+    {
+      "nombre": string,
+      "ventaja": string,
+      "debilidad": string
+    }
+  ],
+  "recomendaciones_priorizadas": string[]
 }
-`;
 
-const DEMO_FALLBACK_AUDIT = {
-  score: 55,
-  summary:
-    "Auditoría DEMO basada en señales públicas y mejores prácticas de SEO local. La precisión es limitada sin ubicación exacta.",
-  strengths: [
-    "Nombre del negocio definido",
-    "Categoría principal identificada"
-  ],
-  weaknesses: [
-    "Falta de optimización local precisa",
-    "Pocas señales de autoridad (reseñas, posts)"
-  ],
-  recommendations: [
-    "Optimizar la descripción con keywords locales",
-    "Solicitar reseñas recientes a clientes",
-    "Publicar actualizaciones semanales en Google Business Profile"
-  ],
-  keywords: [
-    "negocio local en tu ciudad",
-    "servicio cerca de mí"
-  ],
-  competitors: [
-    { name: "Competidor Local A", rating: 4.6, reviews: 320 },
-    { name: "Competidor Local B", rating: 4.4, reviews: 210 }
-  ]
-};
+Si la auditoría es DEMO:
+- score máximo: 60
+- competidores: máximo 2
+- agregar warning claro de limitación por ubicación
+`;
 
 export const handler: Handler = async (event) => {
   try {
+    if (!OPENROUTER_API_KEY) {
+      throw new Error("OPENROUTER_API_KEY no configurada");
+    }
+
     if (event.httpMethod !== "POST") {
       return {
         statusCode: 405,
-        body: JSON.stringify({ error: "Method Not Allowed" })
+        body: JSON.stringify({ error: "Method Not Allowed" }),
       };
-    }
-
-    if (!OPENROUTER_API_KEY) {
-      throw new Error("OPENROUTER_API_KEY no configurada");
     }
 
     const body = JSON.parse(event.body || "{}");
 
     const {
       businessName,
-      city,
       category,
-      description,
       website,
       hasPhotos,
       hasReviews,
-      location // { lat, lng } | null
+      lat,
+      lng,
     } = body;
 
-    const hasLocation =
-      location &&
-      typeof location.lat === "number" &&
-      typeof location.lng === "number";
+    const hasGeo =
+      typeof lat === "number" && typeof lng === "number";
 
-    const mode = hasLocation ? "full" : "demo";
+    const mode = hasGeo ? "full" : "demo";
 
     const userPrompt = `
-Negocio: ${businessName || "No especificado"}
-Ciudad declarada: ${city || "No especificada"}
+Datos del negocio:
+Nombre: ${businessName || "No especificado"}
 Categoría: ${category || "No especificada"}
-Descripción: ${description || "No especificada"}
-Website: ${website || "No disponible"}
+Sitio web: ${website || "No tiene"}
 Tiene fotos: ${hasPhotos ? "Sí" : "No"}
 Tiene reseñas: ${hasReviews ? "Sí" : "No"}
 
-Ubicación exacta:
-${hasLocation ? `Lat ${location.lat}, Lng ${location.lng}` : "NO DISPONIBLE"}
+Ubicación:
+Latitud: ${hasGeo ? lat : "No disponible"}
+Longitud: ${hasGeo ? lng : "No disponible"}
 
 Modo: ${mode.toUpperCase()}
 
-Genera la auditoría respetando estrictamente las limitaciones.
-Si no hay ubicación exacta, haz recomendaciones generales sin fingir proximidad real.
+Realiza la auditoría cumpliendo estrictamente el formato JSON indicado.
 `;
 
-    let auditResult = DEMO_FALLBACK_AUDIT;
-    let warnings: string[] = [];
-
-    if (!hasLocation) {
-      warnings.push(
-        "Ubicación no concedida. El análisis se ejecuta en modo DEMO con precisión limitada."
-      );
-    }
-
-    try {
-      const aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const aiResponse = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
+          model: "google/gemini-1.5-flash",
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt }
+            { role: "user", content: userPrompt },
           ],
-          temperature: 0.2
-        })
-      });
-
-      const aiData = await aiResponse.json();
-      const rawContent =
-        aiData?.choices?.[0]?.message?.content;
-
-      if (rawContent) {
-        auditResult = JSON.parse(rawContent);
+          temperature: 0.2,
+        }),
       }
-    } catch (aiError) {
-      warnings.push(
-        "La IA no pudo generar la auditoría completa. Se usó un resultado seguro de respaldo."
-      );
+    );
+
+    if (!aiResponse.ok) {
+      throw new Error("Error al llamar a OpenRouter");
+    }
+
+    const aiJson = await aiResponse.json();
+    const rawContent =
+      aiJson?.choices?.[0]?.message?.content;
+
+    if (!rawContent) {
+      throw new Error("Respuesta vacía del modelo");
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch {
+      throw new Error("El modelo no devolvió JSON válido");
     }
 
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        mode,
-        audit: auditResult,
-        warnings
-      })
+      body: JSON.stringify(parsed),
     };
   } catch (error: any) {
+    // FALLBACK ABSOLUTO — NUNCA PANTALLA BLANCA
     return {
       statusCode: 200,
       body: JSON.stringify({
-        success: true,
         mode: "demo",
-        audit: DEMO_FALLBACK_AUDIT,
+        geo: { lat: null, lng: null, precision: "baja" },
+        summary: {
+          score: 0,
+          level: "critico",
+          explanation:
+            "No fue posible generar la auditoría completa. Se activó el modo seguro.",
+        },
         warnings: [
-          "Error interno controlado. Se mostró una auditoría de respaldo."
-        ]
-      })
+          "Error interno del servidor",
+          "Auditoría limitada",
+        ],
+        checklist: {
+          completo: [],
+          incompleto: [],
+          faltante: [],
+        },
+        keywords: {
+          actuales: [],
+          recomendadas: [],
+          implementacion: {
+            titulo: [],
+            descripcion: [],
+            posts: [],
+          },
+        },
+        atributos: {
+          presentes: [],
+          faltantes: [],
+        },
+        reviews: {
+          cantidad_estimada: null,
+          rating_estimado: null,
+          recomendaciones: [],
+        },
+        competidores: [],
+        recomendaciones_priorizadas: [
+          "Reintenta la auditoría",
+          "Activa la ubicación para mayor precisión",
+        ],
+      }),
     };
   }
 };
